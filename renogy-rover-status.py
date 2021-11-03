@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Driver for the Renogy Rover Solar Controller using the Modbus RTU protocol
@@ -6,11 +6,13 @@
 import sys
 import string
 import minimalmodbus
+import serial
 
-minimalmodbus.BAUDRATE = 9600
-minimalmodbus.TIMEOUT = 1
+minimalmodbus.serial.baudrate = 9600
+minimalmodbus.serial.timeout = 1
 
 BATTERY_TYPE = {
+	0: 'unknown',
 	1: 'open',
 	2: 'sealed',
 	3: 'gel',
@@ -26,6 +28,7 @@ CHARGING_STATE = {
 	4: 'boost',
 	5: 'floating',
 	6: 'current limiting',
+	32768: 'unknown'
 }
 
 LOAD_MODES = {
@@ -100,17 +103,19 @@ class RenogyRover(minimalmodbus.Instrument):
 # Communicates using the Modbus RTU protocol (via provided USB<->RS232 cable)
 
 	def __init__(self, portname, slaveaddress):
-		minimalmodbus.Instrument.__init__(self, portname, slaveaddress)
-		register = self.read_register(0x000A)
+		self.instrument = minimalmodbus.Instrument(portname, slaveaddress)
+		self.instrument.serial.baudrate = 9600
+		self.instrument.serial.timeout = 1
+		register = self.instrument.read_register(0x000A)
 		self.amps_charge = register & 255
 		self.voltage = register >> 8
-		register = self.read_register(0x000B)
+		register = self.instrument.read_register(0x000B)
 
 		self.amps_discharge = register >> 8
 		self.mtype = MODEL_TYPE.get(register & 255)
 
 
-		register = self.read_register(0x0103)
+		register = self.instrument.read_register(0x0103)
 		battery_temp_bits = register & 255
 		temp_value = battery_temp_bits & 255
 		sign = battery_temp_bits >> 7
@@ -122,7 +127,7 @@ class RenogyRover(minimalmodbus.Instrument):
 
 		self.serialno = self.read_mbyte4(0x0018)
 
-		registers = self.read_registers(0x0014, 4)
+		registers = self.instrument.read_registers(0x0014, 4)
 		soft_major = registers[0] & 255
 		soft_minor = registers[1] >> 8
 		soft_patch = registers[1] & 255
@@ -132,22 +137,31 @@ class RenogyRover(minimalmodbus.Instrument):
 		self.software_version = 'V{}.{}.{}'.format(soft_major, soft_minor, soft_patch)
 		self.hardware_version = 'V{}.{}.{}'.format(hard_major, hard_minor, hard_patch)
 
-		register = self.read_register(0xE00F)
+		register = self.instrument.read_register(0xE00F)
 		self.SOCcharge = register >> 8
 		self.SOCdischarge = register & 255
 
 	def read_voltage(self, register):
 		if self.voltage == 24:
-			return int(self.read_register(register)/10*2*10)/10
+			return int(self.instrument.read_register(register)/10*2*10)/10
 		else:
-			return self.read_register(register)/10
+			return self.instrument.read_register(register)/10
 
 	def read_mbyte4(self, register):
-		registers = self.read_registers(register, 2)
+		registers = self.instrument.read_registers(register, 2)
 		return '{}{}'.format(registers[0], registers[1])
 
+	def write_register(self, register, param):
+		self.instrument.write_register(register, param)
+
+	def read_string(self, register, size):
+		return self.instrument.read_string(register, size)
+
+	def read_register(self, register):
+		return self.instrument.read_register(register)
+
 if __name__ == '__main__':
-	rover = RenogyRover('/dev/ttyAMA0', 1)
+	rover = RenogyRover('/dev/ttyUSB0', 1)
 	rover.write_register(0x010A, False)
 	print('Model.............................'+str(rover.read_string(0x000C, 6).strip()+rover.read_string(0x0012, 2).strip()))
 	print(' Type.............................'+str(rover.mtype))
@@ -158,7 +172,7 @@ if __name__ == '__main__':
 	print(' Rated Max. Charge................'+str(rover.amps_charge)+'A')
 	print(' Rated Max. Discharge.............'+str(rover.amps_discharge)+'A')
 	print(' Data Device Address..............'+str(rover.read_register(0x010A)))
-	print(' Load On/Off Mode.................'+LOAD_MODES.get(rover.read_register(0xE01D)))
+	print(' Load On/Off Mode.................'+LOAD_MODES.get(int(rover.read_register(0xE01D))))
 	print(' Days Working.....................'+str(rover.read_register(0x0115)))
 	print(' Over discharges..................'+str(rover.read_register(0x0116))+'x')
 	print(' Full charges.....................'+str(rover.read_register(0x0117))+'x')
@@ -168,7 +182,7 @@ if __name__ == '__main__':
 	print('Battery:')
 	print(' SOC..............................'+str(rover.read_register(0x0100))+'%')
 	print(' Voltage..........................'+str(rover.read_register(0x0101)/10)+'V')
-	print(' Type.............................'+BATTERY_TYPE.get(rover.read_register(0xE004)))
+	print(' Type.............................'+BATTERY_TYPE.get(int(rover.read_register(0xE004))))
 	print(' Capacity.........................'+str(rover.read_register(0xE002))+'Ah')
 	print(' Temperature......................'+str(rover.battery_temp)+'°C')
 
@@ -184,7 +198,7 @@ if __name__ == '__main__':
 	print(' Voltage..........................'+str(rover.read_register(0x0107)/10)+'V')
 	print(' Current..........................'+str(rover.read_register(0x0108)/100)+'A')
 	print(' Power............................'+str(rover.read_register(0x0109))+'W')
-	print(' Status...........................'+CHARGING_STATE.get(rover.read_register(0x0120) & 255))
+	print(' Status...........................'+CHARGING_STATE.get(int(rover.read_register(0x0120))))
 
 	print('')
 	print('Today:')
